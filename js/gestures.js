@@ -1,158 +1,96 @@
 /* ─── gestures.js ─── */
 window.GestureDetector = (function () {
-  var callback = null;
-  var wristHistory = { left: [], right: [] };
-  var pinchCooldown = { left: 0, right: 0 };
 
-  var pinchThreshold = 0.05;
-  var swipeVelocityThreshold = 0.05;
-  var historyLength = 3;
+  var pinchCooldown  = 0;
+  var fistCooldown   = 0;
+  var wristHistory   = [];
+  var HIST_LEN       = 4;
 
   function init() {
-    callback = null;
-    wristHistory = { left: [], right: [] };
-    pinchCooldown = { left: 0, right: 0 };
+    pinchCooldown = 0;
+    fistCooldown  = 0;
+    wristHistory  = [];
   }
 
-  function dist3D(a, b) {
-    var dx = a.x - b.x;
-    var dy = a.y - b.y;
-    var dz = (a.z || 0) - (b.z || 0);
-    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  // Is a finger extended? tip.y noticeably above mcp.y (raw 0-1 coords, y increases downward)
+  function isExtended(lms, tipIdx, mcpIdx) {
+    return lms[tipIdx].y < lms[mcpIdx].y - 0.04;
   }
 
-  function detectPinch(landmarks, handedness) {
-    if (pinchCooldown[handedness] > 0) {
-      pinchCooldown[handedness]--;
-      return null;
-    }
-    var thumbTip = landmarks[4];
-    var indexTip = landmarks[8];
-    var d = dist3D(thumbTip, indexTip);
-    if (d < pinchThreshold) {
-      pinchCooldown[handedness] = 15; // ~0.5s cooldown at 30fps
-      return {
-        type: 'pinch',
-        hand: handedness,
-        position: {
-          x: (thumbTip.x + indexTip.x) / 2,
-          y: (thumbTip.y + indexTip.y) / 2,
-          z: ((thumbTip.z || 0) + (indexTip.z || 0)) / 2
-        }
-      };
-    }
-    return null;
-  }
-
-  function detectGrab(landmarks, handedness) {
-    // Fingertip indices: 8,12,16,20  Base knuckle indices: 5,9,13,17
-    var tips   = [8, 12, 16, 20];
-    var knucks = [5,  9, 13, 17];
-    var curledCount = 0;
-    for (var i = 0; i < tips.length; i++) {
-      if (landmarks[tips[i]].y > landmarks[knucks[i]].y) {
-        curledCount++;
-      }
-    }
-    if (curledCount >= 4) {
-      return {
-        type: 'grab',
-        hand: handedness,
-        position: {
-          x: landmarks[0].x,
-          y: landmarks[0].y,
-          z: landmarks[0].z || 0
-        }
-      };
-    }
-    return null;
-  }
-
-  function detectSwipe(landmarks, handedness) {
-    var wrist = landmarks[0];
-    var hist  = wristHistory[handedness];
-    hist.push({ x: wrist.x, y: wrist.y, z: wrist.z || 0 });
-    if (hist.length > historyLength) hist.shift();
-    if (hist.length < historyLength) return null;
-
-    var oldest = hist[0];
-    var newest = hist[hist.length - 1];
-    var vx = newest.x - oldest.x;
-    var vy = newest.y - oldest.y;
-    var speed = Math.sqrt(vx * vx + vy * vy);
-
-    if (speed > swipeVelocityThreshold) {
-      return {
-        type: 'swipe',
-        hand: handedness,
-        position: {
-          x: wrist.x,
-          y: wrist.y,
-          z: wrist.z || 0
-        },
-        velocity: { x: vx, y: vy }
-      };
-    }
-    return null;
-  }
-
-  function convertLandmarks(rawLandmarks) {
-    return rawLandmarks.map(function (lm) {
-      return {
-        x: (lm.x - 0.5) * 16,
-        y: -(lm.y - 0.5) * 10,
-        z: (lm.z || 0) * -5
-      };
-    });
+  function dist2D(a, b) {
+    var dx = a.x - b.x, dy = a.y - b.y;
+    return Math.sqrt(dx*dx + dy*dy);
   }
 
   function detect(handData) {
-    var gestures = [];
+    if (!handData.isTracked || handData.rawLandmarks.length < 21) {
+      return { type: 'none', position: null, raw: null };
+    }
 
-    var sides = ['left', 'right'];
-    for (var s = 0; s < sides.length; s++) {
-      var side = sides[s];
-      var hand = handData[side];
-      if (!hand || !hand.isTracked || !hand.landmarks || hand.landmarks.length < 21) continue;
+    var raw = handData.rawLandmarks; // smoothed 0-1 coords
 
-      // Use raw (0-1) landmarks for pinch/grab distance, converted for swipe
-      var raw = hand.rawLandmarks || hand.landmarks;
-
-      var pinch = detectPinch(raw, side);
-      if (pinch) {
-        // Convert position to Three.js coords
-        pinch.position.x = (pinch.position.x - 0.5) * 16;
-        pinch.position.y = -(pinch.position.y - 0.5) * 10;
-        pinch.position.z = pinch.position.z * -5;
-        gestures.push(pinch);
-        if (callback) callback(pinch);
-      }
-
-      var grab = detectGrab(raw, side);
-      if (grab) {
-        grab.position.x = (grab.position.x - 0.5) * 16;
-        grab.position.y = -(grab.position.y - 0.5) * 10;
-        grab.position.z = grab.position.z * -5;
-        gestures.push(grab);
-        if (callback) callback(grab);
-      }
-
-      var swipe = detectSwipe(raw, side);
-      if (swipe) {
-        swipe.position.x = (swipe.position.x - 0.5) * 16;
-        swipe.position.y = -(swipe.position.y - 0.5) * 10;
-        swipe.position.z = swipe.position.z * -5;
-        gestures.push(swipe);
-        if (callback) callback(swipe);
+    // ── Pinch: thumb tip (4) close to index tip (8) ──
+    if (pinchCooldown > 0) {
+      pinchCooldown--;
+    } else {
+      var pd = dist2D(raw[4], raw[8]);
+      if (pd < 0.05) {
+        pinchCooldown = 18;
+        var px = (raw[4].x + raw[8].x) / 2;
+        var py = (raw[4].y + raw[8].y) / 2;
+        return {
+          type: 'pinch',
+          position: { x: (px-0.5)*16, y: -(py-0.5)*10, z: 0 },
+          raw: { x: px, y: py }
+        };
       }
     }
 
-    return gestures;
+    // Count extended fingers (index, middle, ring, pinky)
+    // tip/mcp pairs: 8/5, 12/9, 16/13, 20/17
+    var extIndex  = isExtended(raw, 8,  5);
+    var extMiddle = isExtended(raw, 12, 9);
+    var extRing   = isExtended(raw, 16, 13);
+    var extPinky  = isExtended(raw, 20, 17);
+    var extCount  = (extIndex?1:0)+(extMiddle?1:0)+(extRing?1:0)+(extPinky?1:0);
+
+    // ── Open palm: 3+ fingers extended → ATTRACT ──
+    if (extCount >= 3) {
+      var palmX = (raw[0].x + raw[9].x) / 2;
+      var palmY = (raw[0].y + raw[9].y) / 2;
+      return {
+        type: 'palm',
+        position: { x: (palmX-0.5)*16, y: -(palmY-0.5)*10, z: 0 },
+        raw: raw[9]
+      };
+    }
+
+    // ── Point: only index extended → REPEL RAY ──
+    if (extIndex && !extMiddle && !extRing && !extPinky) {
+      return {
+        type: 'point',
+        position: { x: (raw[8].x-0.5)*16, y: -(raw[8].y-0.5)*10, z: 0 },
+        raw: raw[8]
+      };
+    }
+
+    // ── Fist: 0-1 fingers extended → SHOCKWAVE (cooldown-gated) ──
+    if (extCount <= 1) {
+      if (fistCooldown > 0) {
+        fistCooldown--;
+        return { type: 'fist-hold', position: { x: (raw[0].x-0.5)*16, y: -(raw[0].y-0.5)*10, z: 0 }, raw: raw[0] };
+      } else {
+        fistCooldown = 45; // ~1.5s at 30fps
+        return {
+          type: 'fist',
+          position: { x: (raw[0].x-0.5)*16, y: -(raw[0].y-0.5)*10, z: 0 },
+          raw: raw[0]
+        };
+      }
+    }
+
+    return { type: 'none', position: null, raw: null };
   }
 
-  function onGesture(cb) {
-    callback = cb;
-  }
-
-  return { init: init, detect: detect, onGesture: onGesture };
+  return { init: init, detect: detect };
 })();

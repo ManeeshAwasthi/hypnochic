@@ -1,183 +1,241 @@
 /* ─── handTracker.js ─── */
 window.HandTracker = (function () {
 
-  // Smoothed hand data (Three.js coords) exposed to the rest of the app
+  // Single hand — flat structure
   var handData = {
-    left:  { landmarks: [], rawLandmarks: [], fingertips: [], isTracked: false },
-    right: { landmarks: [], rawLandmarks: [], fingertips: [], isTracked: false }
+    landmarks:    [],   // Three.js coords (smoothed)
+    rawLandmarks: [],   // raw 0-1 coords  (smoothed)
+    fingertips:   [],   // Three.js coords of fingertips
+    isTracked:    false
   };
 
-  // Internal smoothed raw (0-1) landmarks for drawing
-  var smoothed = {
-    left:  null,
-    right: null
-  };
+  var smoothedRaw = null;
+  var SMOOTH = 0.4; // lerp factor
 
-  var SMOOTH = 0.35; // lerp factor — lower = smoother but more lag
+  var FINGERTIP_IDX = [4, 8, 12, 16, 20];
 
-  // Fingertip indices
-  var FINGERTIP_INDICES = [4, 8, 12, 16, 20];
-
-  // Hand skeleton connections (MediaPipe standard)
-  var CONNECTIONS = [
-    [0,1],[1,2],[2,3],[3,4],         // thumb
-    [0,5],[5,6],[6,7],[7,8],         // index
-    [0,9],[9,10],[10,11],[11,12],    // middle
-    [0,13],[13,14],[14,15],[15,16],  // ring
-    [0,17],[17,18],[18,19],[19,20],  // pinky
-    [5,9],[9,13],[13,17]             // palm cross
-  ];
-
-  // Canvas for skeleton overlay
+  // Canvas overlay
   var handCanvas, ctx;
+
+  // Ring effects (shockwave pulses)
+  var rings = [];
+
+  // Hand connections
+  var CONNECTIONS = [
+    [0,1],[1,2],[2,3],[3,4],
+    [0,5],[5,6],[6,7],[7,8],
+    [0,9],[9,10],[10,11],[11,12],
+    [0,13],[13,14],[14,15],[15,16],
+    [0,17],[17,18],[18,19],[19,20],
+    [5,9],[9,13],[13,17]
+  ];
 
   function initCanvas() {
     handCanvas = document.getElementById('hand-canvas');
     ctx = handCanvas.getContext('2d');
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
+    resize();
+    window.addEventListener('resize', resize);
   }
 
-  function resizeCanvas() {
+  function resize() {
     handCanvas.width  = window.innerWidth;
     handCanvas.height = window.innerHeight;
   }
 
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
   function lerpLandmarks(prev, next) {
-    if (!prev) return next.map(function (lm) {
-      return { x: lm.x, y: lm.y, z: lm.z || 0 };
+    if (!prev) return next.map(function (l) {
+      return { x: l.x, y: l.y, z: l.z || 0 };
     });
-    return next.map(function (lm, i) {
+    return next.map(function (l, i) {
       return {
-        x: prev[i].x + (lm.x - prev[i].x) * SMOOTH,
-        y: prev[i].y + (lm.y - prev[i].y) * SMOOTH,
-        z: (prev[i].z || 0) + ((lm.z || 0) - (prev[i].z || 0)) * SMOOTH
+        x: lerp(prev[i].x, l.x, SMOOTH),
+        y: lerp(prev[i].y, l.y, SMOOTH),
+        z: lerp(prev[i].z || 0, l.z || 0, SMOOTH)
       };
     });
   }
 
-  function convertToThreeJS(landmark) {
+  function toThree(lm) {
     return {
-      x: (landmark.x - 0.5) * 16,
-      y: -(landmark.y - 0.5) * 10,
-      z: (landmark.z || 0) * -5
+      x:  (lm.x - 0.5) * 16,
+      y: -(lm.y - 0.5) * 10,
+      z:  (lm.z || 0)  * -5
     };
   }
 
-  function drawSkeleton(rawLms, color) {
-    var w = handCanvas.width;
-    var h = handCanvas.height;
-
-    // Helper: convert 0-1 landmark to mirrored canvas px
-    function px(lm) {
-      return {
-        x: (1 - lm.x) * w,   // mirror X so it feels natural
-        y: lm.y * h
-      };
-    }
-
-    // Draw connections
-    ctx.lineWidth = 2;
-    for (var c = 0; c < CONNECTIONS.length; c++) {
-      var a = px(rawLms[CONNECTIONS[c][0]]);
-      var b = px(rawLms[CONNECTIONS[c][1]]);
-
-      var grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
-      grad.addColorStop(0, color.line0);
-      grad.addColorStop(1, color.line1);
-      ctx.strokeStyle = grad;
-      ctx.shadowColor  = color.glow;
-      ctx.shadowBlur   = 8;
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-    }
-
-    // Draw joints
-    for (var i = 0; i < rawLms.length; i++) {
-      var p = px(rawLms[i]);
-      var isFingertip = FINGERTIP_INDICES.indexOf(i) !== -1;
-      var radius = isFingertip ? 5 : 3;
-
-      ctx.shadowBlur  = 14;
-      ctx.shadowColor = color.glow;
-      ctx.fillStyle   = isFingertip ? color.tip : color.joint;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
+  // px: raw 0-1 landmark → canvas pixels (NO x-flip — webcam is already mirrored on Windows)
+  function px(lm) {
+    return { x: lm.x * handCanvas.width, y: lm.y * handCanvas.height };
   }
 
-  var LEFT_COLORS = {
-    line0: 'rgba(167,139,250,0.9)',
-    line1: 'rgba(124,58,237,0.9)',
-    glow:  '#7c3aed',
-    joint: 'rgba(167,139,250,1)',
-    tip:   '#ffffff'
-  };
-
-  var RIGHT_COLORS = {
-    line0: 'rgba(236,72,153,0.9)',
-    line1: 'rgba(167,139,250,0.9)',
-    glow:  '#ec4899',
-    joint: 'rgba(236,72,153,1)',
-    tip:   '#ffffff'
-  };
-
   function onResults(results) {
-    // Clear skeleton canvas
-    ctx.clearRect(0, 0, handCanvas.width, handCanvas.height);
-
-    // Reset tracking
-    handData.left.isTracked  = false;
-    handData.right.isTracked = false;
-    handData.left.landmarks  = [];
-    handData.left.rawLandmarks = [];
-    handData.right.landmarks = [];
-    handData.right.rawLandmarks = [];
-    handData.left.fingertips  = [];
-    handData.right.fingertips = [];
+    handData.isTracked = false;
+    handData.landmarks = [];
+    handData.rawLandmarks = [];
+    handData.fingertips = [];
 
     if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-      smoothed.left  = null;
-      smoothed.right = null;
+      smoothedRaw = null;
       return;
     }
 
-    var tracked = { left: false, right: false };
+    // Only first detected hand
+    var raw = results.multiHandLandmarks[0];
+    smoothedRaw = lerpLandmarks(smoothedRaw, raw);
 
-    for (var h = 0; h < results.multiHandLandmarks.length; h++) {
-      var rawLandmarks = results.multiHandLandmarks[h];
-      var handedness   = results.multiHandedness[h];
-      var side = (handedness.label === 'Left') ? 'right' : 'left';
+    var converted = smoothedRaw.map(toThree);
+    handData.landmarks    = converted;
+    handData.rawLandmarks = smoothedRaw;
+    handData.fingertips   = FINGERTIP_IDX.map(function (i) { return converted[i]; });
+    handData.isTracked    = true;
+  }
 
-      tracked[side] = true;
+  // Called from rAF loop in main.js — draws skeleton + cursor for current gesture mode
+  function draw(gestureMode) {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, handCanvas.width, handCanvas.height);
 
-      // Smooth raw landmarks
-      smoothed[side] = lerpLandmarks(smoothed[side], rawLandmarks);
-
-      // Draw skeleton using smoothed positions
-      drawSkeleton(smoothed[side], side === 'left' ? LEFT_COLORS : RIGHT_COLORS);
-
-      // Convert smoothed to Three.js coords
-      var converted = smoothed[side].map(function (lm) {
-        return convertToThreeJS(lm);
-      });
-
-      var fingertips = FINGERTIP_INDICES.map(function (idx) {
-        return converted[idx];
-      });
-
-      handData[side].landmarks     = converted;
-      handData[side].rawLandmarks  = smoothed[side];
-      handData[side].fingertips    = fingertips;
-      handData[side].isTracked     = true;
+    // Draw and update ring effects
+    for (var r = rings.length - 1; r >= 0; r--) {
+      var ring = rings[r];
+      ring.radius += ring.speed;
+      ring.alpha  -= 0.025;
+      if (ring.alpha <= 0) { rings.splice(r, 1); continue; }
+      ctx.save();
+      ctx.strokeStyle = ring.color;
+      ctx.globalAlpha = ring.alpha;
+      ctx.lineWidth   = 2;
+      ctx.shadowColor = ring.color;
+      ctx.shadowBlur  = 12;
+      ctx.beginPath();
+      ctx.arc(ring.x, ring.y, ring.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
     }
 
-    // Clear smoothed state for hands that disappeared
-    if (!tracked.left)  smoothed.left  = null;
-    if (!tracked.right) smoothed.right = null;
+    if (!handData.isTracked || !smoothedRaw) return;
+
+    var lms = smoothedRaw;
+
+    // ── Skeleton bones ──
+    ctx.save();
+    ctx.lineWidth   = 2;
+    ctx.shadowBlur  = 10;
+    ctx.shadowColor = '#7c3aed';
+    for (var c = 0; c < CONNECTIONS.length; c++) {
+      var a = px(lms[CONNECTIONS[c][0]]);
+      var b = px(lms[CONNECTIONS[c][1]]);
+      var g = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+      g.addColorStop(0, 'rgba(167,139,250,0.85)');
+      g.addColorStop(1, 'rgba(124,58,237,0.85)');
+      ctx.strokeStyle = g;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    ctx.restore();
+
+    // ── Joints ──
+    ctx.save();
+    for (var j = 0; j < lms.length; j++) {
+      var p   = px(lms[j]);
+      var tip = FINGERTIP_IDX.indexOf(j) !== -1;
+      ctx.shadowBlur  = tip ? 18 : 8;
+      ctx.shadowColor = tip ? '#ffffff' : '#a78bfa';
+      ctx.fillStyle   = tip ? '#ffffff' : '#a78bfa';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, tip ? 5 : 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // ── Cursor / aura per gesture mode ──
+    var indexTip = px(lms[8]);
+    var wristPx  = px(lms[0]);
+
+    if (gestureMode === 'point') {
+      // Pulsing orb at index tip + ray outward
+      var palmPx = px(lms[5]);
+      var dx = indexTip.x - palmPx.x;
+      var dy = indexTip.y - palmPx.y;
+      var len = Math.sqrt(dx*dx+dy*dy) || 1;
+      var endX = indexTip.x + (dx/len)*120;
+      var endY = indexTip.y + (dy/len)*120;
+
+      ctx.save();
+      var ray = ctx.createLinearGradient(indexTip.x, indexTip.y, endX, endY);
+      ray.addColorStop(0, 'rgba(167,139,250,0.9)');
+      ray.addColorStop(1, 'rgba(124,58,237,0)');
+      ctx.strokeStyle = ray;
+      ctx.lineWidth   = 4;
+      ctx.shadowColor = '#7c3aed';
+      ctx.shadowBlur  = 20;
+      ctx.beginPath(); ctx.moveTo(indexTip.x, indexTip.y); ctx.lineTo(endX, endY); ctx.stroke();
+      // orb
+      var orbGrad = ctx.createRadialGradient(indexTip.x, indexTip.y, 0, indexTip.x, indexTip.y, 18);
+      orbGrad.addColorStop(0, 'rgba(255,255,255,0.95)');
+      orbGrad.addColorStop(0.4, 'rgba(167,139,250,0.7)');
+      orbGrad.addColorStop(1, 'rgba(124,58,237,0)');
+      ctx.fillStyle = orbGrad;
+      ctx.beginPath(); ctx.arc(indexTip.x, indexTip.y, 18, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+
+    } else if (gestureMode === 'palm') {
+      // Vortex glow at palm center (landmark 9)
+      var palmC = px(lms[9]);
+      ctx.save();
+      var vGrad = ctx.createRadialGradient(palmC.x, palmC.y, 0, palmC.x, palmC.y, 55);
+      vGrad.addColorStop(0, 'rgba(236,72,153,0.5)');
+      vGrad.addColorStop(0.5,'rgba(167,139,250,0.2)');
+      vGrad.addColorStop(1, 'rgba(236,72,153,0)');
+      ctx.fillStyle = vGrad;
+      ctx.shadowColor = '#ec4899';
+      ctx.shadowBlur  = 30;
+      ctx.beginPath(); ctx.arc(palmC.x, palmC.y, 55, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+
+    } else if (gestureMode === 'fist') {
+      // Red-orange flare at fist/wrist
+      ctx.save();
+      var fGrad = ctx.createRadialGradient(wristPx.x, wristPx.y, 0, wristPx.x, wristPx.y, 45);
+      fGrad.addColorStop(0, 'rgba(255,100,0,0.6)');
+      fGrad.addColorStop(1, 'rgba(124,58,237,0)');
+      ctx.fillStyle = fGrad;
+      ctx.shadowColor = '#ff6400';
+      ctx.shadowBlur  = 25;
+      ctx.beginPath(); ctx.arc(wristPx.x, wristPx.y, 45, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+
+    } else if (gestureMode === 'pinch') {
+      // White flash at pinch point
+      var thumbPx = px(lms[4]);
+      var cx2 = (indexTip.x + thumbPx.x) / 2;
+      var cy2 = (indexTip.y + thumbPx.y) / 2;
+      ctx.save();
+      var pGrad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, 30);
+      pGrad.addColorStop(0, 'rgba(255,255,255,0.9)');
+      pGrad.addColorStop(1, 'rgba(167,139,250,0)');
+      ctx.fillStyle = pGrad;
+      ctx.shadowColor = '#ffffff';
+      ctx.shadowBlur  = 20;
+      ctx.beginPath(); ctx.arc(cx2, cy2, 30, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+
+    } else {
+      // Idle: soft dot at index tip
+      ctx.save();
+      ctx.fillStyle   = 'rgba(255,255,255,0.4)';
+      ctx.shadowColor = '#a78bfa';
+      ctx.shadowBlur  = 12;
+      ctx.beginPath(); ctx.arc(indexTip.x, indexTip.y, 8, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // Trigger a visible shockwave ring on the canvas
+  function addRing(rawLm, color) {
+    var p = px(rawLm);
+    rings.push({ x: p.x, y: p.y, radius: 20, speed: 8, alpha: 0.9, color: color || '#7c3aed' });
   }
 
   function init(videoElement) {
@@ -190,8 +248,8 @@ window.HandTracker = (function () {
     });
 
     hands.setOptions({
-      maxNumHands:            2,
-      modelComplexity:        1,
+      maxNumHands: 1,
+      modelComplexity: 1,
       minDetectionConfidence: 0.7,
       minTrackingConfidence:  0.5
     });
@@ -199,19 +257,18 @@ window.HandTracker = (function () {
     hands.onResults(onResults);
 
     var cam = new Camera(videoElement, {
-      onFrame: function () {
-        return hands.send({ image: videoElement });
-      },
+      onFrame: function () { return hands.send({ image: videoElement }); },
       width: 640,
       height: 480
     });
-
     cam.start();
   }
 
-  function getHandData() {
-    return handData;
-  }
-
-  return { init: init, getHandData: getHandData, convertToThreeJS: convertToThreeJS };
+  return {
+    init: init,
+    getHandData: function () { return handData; },
+    draw: draw,
+    addRing: addRing,
+    convertToThreeJS: toThree
+  };
 })();
