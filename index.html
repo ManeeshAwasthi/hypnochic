@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HypnoChic</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+
+  <!-- Three.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- MediaPipe -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+</head>
+<body>
+  <canvas id="hypnochic-canvas"></canvas>
+  <video id="webcam" autoplay playsinline></video>
+
+  <div id="overlay">
+    <div id="title">HypnoChic</div>
+    <div id="instruction">Move your hands</div>
+  </div>
+
+  <div id="permission-screen">
+    <div id="permission-box">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="1.5" style="margin-bottom:1rem">
+        <path d="M15 10h.01M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+        <circle cx="12" cy="14" r="3"/>
+        <path d="M12 11v-1M12 17v1M9.27 12.27l-.7-.7M15.43 15.43l-.7-.7M8 14H7M17 14h-1M9.27 15.73l-.7.7M15.43 12.57l-.7.7"/>
+      </svg>
+      <h2 style="margin:0 0 0.75rem;font-size:1.5rem;font-weight:600;letter-spacing:0.05em">Camera Access Required</h2>
+      <p style="margin:0;color:#888;font-size:0.95rem;line-height:1.6">HypnoChic needs your camera to track hand movements</p>
+      <button id="allow-btn">Allow Camera</button>
+    </div>
+  </div>
+
+  <!-- JS modules in required order -->
+  <script src="js/scene.js"></script>
+  <script src="js/objects.js"></script>
+  <script src="js/particles.js"></script>
+  <script src="js/physics.js"></script>
+  <script src="js/gestures.js"></script>
+  <script src="js/handTracker.js"></script>
+  <script src="js/camera.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
