@@ -1,5 +1,6 @@
 /* ─── camera.js ─── */
 window.CameraManager = (function () {
+
   function init() {
     var permScreen = document.getElementById('permission-screen');
     var video      = document.getElementById('webcam');
@@ -11,13 +12,14 @@ window.CameraManager = (function () {
         video.srcObject = stream;
         return new Promise(function (resolve) {
           video.onloadedmetadata = function () {
-            video.play();
-            resolve();
+            video.play().then(resolve).catch(resolve);
           };
         });
       })
       .then(function () {
         HandTracker.init(video);
+        // Signal that camera + MediaPipe are wired up — scene can now start
+        window.dispatchEvent(new Event('hypnochic-ready'));
       });
   }
 
@@ -25,11 +27,15 @@ window.CameraManager = (function () {
     init().catch(function (err) {
       console.error('Camera error:', err);
       var box = document.getElementById('permission-box');
-      var msg = document.createElement('p');
-      msg.style.color = '#ec4899';
-      msg.style.marginTop = '1rem';
-      msg.textContent = 'Camera access denied. Please allow camera and refresh.';
-      box.appendChild(msg);
+      // Avoid duplicate error messages
+      if (!document.getElementById('cam-error')) {
+        var msg = document.createElement('p');
+        msg.id = 'cam-error';
+        msg.style.color = '#ec4899';
+        msg.style.marginTop = '1rem';
+        msg.textContent = 'Camera access denied. Please allow camera and refresh.';
+        box.appendChild(msg);
+      }
       document.getElementById('permission-screen').style.display = 'flex';
     });
   }
