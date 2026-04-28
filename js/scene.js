@@ -50,4 +50,4 @@ window.SceneManager = (function () {
   }
 
   return { init: init, getScene: getScene, getCamera: getCamera, getRenderer: getRenderer, render: render };
-})();
+// L1-A: missing closing })(); — SyntaxError, IIFE never closed
