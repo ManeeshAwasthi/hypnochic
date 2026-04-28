@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ── 1. JS syntax check (catches SyntaxError / malformed code) ──
+      - name: JS syntax check
+        run: |
+          for f in js/*.js; do
+            node --check "$f" && echo "✓ $f" || exit 1
+          done
+
+      # ── 2. Verify all <script src> tags point to existing files ──
+      - name: Verify script dependencies
+        run: |
+          grep -oP '(?<=src=")[^"]+\.js' index.html | while IFS= read -r src; do
+            if [ ! -f "$src" ]; then
+              echo "❌  Missing: $src"
+              exit 1
+            fi
+            echo "✓ $src"
+          done
+
+      # ── 3. ESLint — catches undefined variables and runtime errors ──
+      - name: Install ESLint
+        run: npm install --no-save eslint@8
+
+      - name: ESLint
+        run: npx eslint "js/*.js" -c .eslintrc.json

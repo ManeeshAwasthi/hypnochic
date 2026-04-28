@@ -1,0 +1,25 @@
+{
+  "env": {
+    "browser": true,
+    "es6": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2015
+  },
+  "globals": {
+    "THREE":           "readonly",
+    "Hands":           "readonly",
+    "Camera":          "readonly",
+    "CameraManager":   "readonly",
+    "SceneManager":    "readonly",
+    "ObjectManager":   "readonly",
+    "ParticleSystem":  "readonly",
+    "GestureDetector": "readonly",
+    "HandTracker":     "readonly",
+    "PhysicsEngine":   "readonly"
+  },
+  "rules": {
+    "no-undef":       "error",
+    "no-unused-vars": "warn"
+  }
+}
