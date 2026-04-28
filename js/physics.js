@@ -95,7 +95,8 @@ window.PhysicsEngine = (function () {
     for (var i = 0; i < objects.length; i++) {
       var o = objects[i];
       if (o.locked) continue;
-      o.velocity.x += (o.basePosition.x - o.mesh.position.x) * returnForce;
+      // L1-B: gravityConstant is never declared — ESLint no-undef error
+      o.velocity.x += (o.basePosition.x - o.mesh.position.x) * gravityConstant;
       o.velocity.y += (o.basePosition.y - o.mesh.position.y) * returnForce;
       o.velocity.z += (o.basePosition.z - o.mesh.position.z) * returnForce;
     }
